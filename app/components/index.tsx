@@ -9,6 +9,7 @@ import Toast from '@/app/components/base/toast'
 import Sidebar from '@/app/components/sidebar'
 import ConfigSence from '@/app/components/config-scence'
 import Header from '@/app/components/header'
+import Dashboard from '@/app/components/dashboard'
 import { fetchAppParams, fetchChatList, fetchConversations, generationConversationName, sendChatMessage, updateFeedback } from '@/service'
 import type { ChatItem, ConversationItem, Feedbacktype, PromptConfig, VisionFile, VisionSettings } from '@/types/app'
 import type { FileUpload } from '@/app/components/base/file-uploader-in-attachment/types'
@@ -19,9 +20,13 @@ import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
 import Loading from '@/app/components/base/loading'
 import { replaceVarWithValues, userInputsFormToPromptVariables } from '@/utils/prompt'
 import AppUnavailable from '@/app/components/app-unavailable'
-import { API_KEY, APP_ID, APP_INFO, isShowPrompt, promptTemplate } from '@/config'
+import { APP_ID, APP_INFO, isShowPrompt, promptTemplate } from '@/config'
 import type { Annotation as AnnotationType } from '@/types/log'
 import { addFileInfos, sortAgentSorts } from '@/utils/tools'
+import type { AssistantId } from '@/config/assistants'
+import { ASSISTANT_MODE_VAR, DEFAULT_ASSISTANT_ID, getAssistant, isAssistantId } from '@/config/assistants'
+
+const ASSISTANT_STORAGE_KEY = 'sac-copilot-assistant'
 
 export interface IMainProps {
   params: any
@@ -31,7 +36,7 @@ const Main: FC<IMainProps> = () => {
   const { t } = useTranslation()
   const media = useBreakpoints()
   const isMobile = media === MediaType.mobile
-  const hasSetAppConfig = APP_ID && API_KEY
+  const hasSetAppConfig = !!APP_ID
 
   /*
   * app info
@@ -50,8 +55,28 @@ const Main: FC<IMainProps> = () => {
   })
   const [fileConfig, setFileConfig] = useState<FileUpload | undefined>()
 
+  /*
+  * specialist assistant. Sent to Dify as the `assistant_mode` input of new conversations.
+  */
+  const [activeAssistant, setActiveAssistant] = useState<AssistantId>(DEFAULT_ASSISTANT_ID)
+  const assistant = getAssistant(activeAssistant)
   useEffect(() => {
-    if (APP_INFO?.title) { document.title = `${APP_INFO.title} - Powered by Dify` }
+    try {
+      const saved = localStorage.getItem(ASSISTANT_STORAGE_KEY)
+      if (isAssistantId(saved)) { setActiveAssistant(saved) }
+    }
+    catch { }
+  }, [])
+  const selectAssistant = (id: AssistantId) => {
+    setActiveAssistant(id)
+    try {
+      localStorage.setItem(ASSISTANT_STORAGE_KEY, id)
+    }
+    catch { }
+  }
+
+  useEffect(() => {
+    if (APP_INFO?.title) { document.title = APP_INFO.title }
   }, [APP_INFO?.title])
 
   // onData change thought (the produce obj). https://github.com/immerjs/immer/issues/576
@@ -92,8 +117,11 @@ const Main: FC<IMainProps> = () => {
     // parse variables in introduction
     setChatList(generateNewChatListWithOpenStatement('', inputs))
   }
+  // Apps without (other) input variables skip the "Start Chat" form and open the dashboard directly.
+  const hasOtherInputs = !!promptConfig?.prompt_variables.length
   const hasSetInputs = (() => {
     if (!isNewConversation) { return true }
+    if (!hasOtherInputs) { return true }
 
     return isChatStarted
   })()
@@ -113,6 +141,8 @@ const Main: FC<IMainProps> = () => {
       notSyncToStateInputs = item?.inputs || {}
       setCurrInputs(notSyncToStateInputs as any)
       notSyncToStateIntroduction = item?.introduction || ''
+      const conversationMode = item?.inputs?.[ASSISTANT_MODE_VAR]
+      if (isAssistantId(conversationMode)) { setActiveAssistant(conversationMode) }
       setExistConversationInfo({
         name: item?.name || '',
         introduction: notSyncToStateIntroduction,
@@ -151,7 +181,7 @@ const Main: FC<IMainProps> = () => {
       })
     }
 
-    if (isNewConversation && isChatStarted) { setChatList(generateNewChatListWithOpenStatement()) }
+    if (isNewConversation) { setChatList(isChatStarted ? generateNewChatListWithOpenStatement() : []) }
   }
   useEffect(handleConversationSwitch, [currConversationId, inited])
 
@@ -173,8 +203,13 @@ const Main: FC<IMainProps> = () => {
   */
   const [chatList, setChatList, getChatList] = useGetState<ChatItem[]>([])
   const chatListDomRef = useRef<HTMLDivElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    // scroll to bottom with page-level scrolling
+    // scroll to the latest message; the dashboard of a new chat starts at the top
+    if (!chatList.some(item => !item.isAnswer)) {
+      scrollAreaRef.current?.scrollTo({ top: 0 })
+      return
+    }
     if (chatListDomRef.current) {
       setTimeout(() => {
         chatListDomRef.current?.scrollIntoView({
@@ -255,7 +290,8 @@ const Main: FC<IMainProps> = () => {
             suggested_questions,
           })
         }
-        const prompt_variables = userInputsFormToPromptVariables(user_input_form)
+        // assistant_mode is filled from the selected assistant, never shown in the input form
+        const prompt_variables = userInputsFormToPromptVariables(user_input_form).filter(item => item.key !== ASSISTANT_MODE_VAR)
         setPromptConfig({
           prompt_template: promptTemplate,
           prompt_variables,
@@ -307,7 +343,7 @@ const Main: FC<IMainProps> = () => {
     let emptyRequiredInput = false
     promptConfig.prompt_variables.forEach((item) => {
       if (item.required && !currInputs[item.key])
-        emptyRequiredInput = true
+      { emptyRequiredInput = true }
     })
 
     if (emptyRequiredInput) {
@@ -372,6 +408,8 @@ const Main: FC<IMainProps> = () => {
         else { toServerInputs[key] = value }
       })
     }
+
+    if (isNewConversation) { toServerInputs[ASSISTANT_MODE_VAR] = activeAssistant }
 
     const data: Record<string, any> = {
       inputs: toServerInputs,
@@ -636,7 +674,30 @@ const Main: FC<IMainProps> = () => {
     notify({ type: 'success', message: t('common.api.success') })
   }
 
-  const renderSidebar = () => {
+  // Composer and dashboard entry point. A brand-new chat is started implicitly on the first message.
+  const handleComposerSend = (message: string, files?: VisionFile[]) => {
+    if (isResponding) {
+      notify({ type: 'info', message: t('app.errorMessage.waitForResponse') })
+      return
+    }
+    if (isNewConversation && !isChatStarted) {
+      if (!checkCanSend()) { return }
+      createNewChat()
+      setConversationIdChangeBecauseOfNew(true)
+      setChatStarted()
+    }
+    handleSend(message, files)
+  }
+
+  // Dify fixes a conversation's inputs when it starts, so a different assistant needs a new chat.
+  const handleAssistantChange = (id: AssistantId) => {
+    selectAssistant(id)
+    hideSidebar()
+    const hasMessages = chatList.some(item => !item.isAnswer)
+    if (id !== activeAssistant && (!isNewConversation || hasMessages)) { handleConversationIdChange('-1') }
+  }
+
+  const renderSidebar = (onClose?: () => void) => {
     if (!APP_ID || !APP_INFO || !promptConfig) { return null }
     return (
       <Sidebar
@@ -644,57 +705,77 @@ const Main: FC<IMainProps> = () => {
         onCurrentIdChange={handleConversationIdChange}
         currentId={currConversationId}
         copyRight={APP_INFO.copyright || APP_INFO.title}
+        activeAssistant={activeAssistant}
+        onAssistantChange={handleAssistantChange}
+        onClose={onClose}
       />
     )
   }
 
-  if (appUnavailable) { return <AppUnavailable isUnknownReason={isUnknownReason} errMessage={!hasSetAppConfig ? 'Please set APP_ID and API_KEY in config/index.tsx' : ''} /> }
+  if (appUnavailable) { return <AppUnavailable isUnknownReason={isUnknownReason} errMessage={!hasSetAppConfig ? 'Please set NEXT_PUBLIC_APP_ID, APP_KEY and API_URL environment variables' : ''} /> }
 
   if (!APP_ID || !APP_INFO || !promptConfig) { return <Loading type='app' /> }
 
+  const showDashboard = isNewConversation && !chatList.some(item => !item.isAnswer)
+
   return (
-    <div className='bg-gray-100'>
-      <Header
-        title={APP_INFO.title}
-        isMobile={isMobile}
-        onShowSideBar={showSidebar}
-        onCreateNewChat={() => handleConversationIdChange('-1')}
-      />
-      <div className="flex rounded-t-2xl bg-white overflow-hidden">
-        {/* sidebar */}
-        {!isMobile && renderSidebar()}
-        {isMobile && isShowSidebar && (
-          <div className='fixed inset-0 z-50' style={{ backgroundColor: 'rgba(35, 56, 118, 0.2)' }} onClick={hideSidebar} >
-            <div className='inline-block' onClick={e => e.stopPropagation()}>
-              {renderSidebar()}
-            </div>
+    <div className='flex h-full bg-canvas'>
+      {/* sidebar */}
+      {!isMobile && renderSidebar()}
+      {isMobile && isShowSidebar && (
+        <div className='fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-[2px] dark:bg-black/60' onClick={hideSidebar} >
+          <div className='h-full w-[280px] max-w-[85vw] shadow-2xl' onClick={e => e.stopPropagation()}>
+            {renderSidebar(hideSidebar)}
           </div>
-        )}
-        {/* main */}
-        <div className='flex-grow flex flex-col h-[calc(100vh_-_3rem)] overflow-y-auto'>
-          <ConfigSence
-            conversationName={conversationName}
-            hasSetInputs={hasSetInputs}
-            isPublicVersion={isShowPrompt}
-            siteInfo={APP_INFO}
-            promptConfig={promptConfig}
-            onStartChat={handleStartChat}
-            canEditInputs={canEditInputs}
-            savedInputs={currInputs as Record<string, any>}
-            onInputsChange={setCurrInputs}
-          ></ConfigSence>
+        </div>
+      )}
+      {/* main */}
+      <div className='relative flex min-w-0 flex-1 flex-col'>
+        <Header
+          title={isNewConversation ? t('app.chat.newChatDefaultName') : conversationName}
+          assistant={assistant}
+          isMobile={isMobile}
+          onShowSideBar={showSidebar}
+          onCreateNewChat={() => handleConversationIdChange('-1')}
+        />
+        <div className='flex-1 overflow-y-auto' ref={scrollAreaRef}>
+          {(hasOtherInputs && (!hasSetInputs || canEditInputs)) && (
+            <ConfigSence
+              conversationName={conversationName}
+              hasSetInputs={hasSetInputs}
+              isPublicVersion={isShowPrompt}
+              siteInfo={APP_INFO}
+              promptConfig={promptConfig}
+              onStartChat={handleStartChat}
+              canEditInputs={canEditInputs}
+              savedInputs={currInputs as Record<string, any>}
+              onInputsChange={setCurrInputs}
+            ></ConfigSence>
+          )}
 
           {
             hasSetInputs && (
-              <div className='relative grow pc:w-[794px] max-w-full mobile:w-full pb-[180px] mx-auto mb-3.5' ref={chatListDomRef}>
+              <div className='w-full pb-[168px]' ref={chatListDomRef}>
                 <Chat
                   chatList={chatList}
-                  onSend={handleSend}
+                  onSend={handleComposerSend}
                   onFeedback={handleFeedback}
                   isResponding={isResponding}
                   checkCanSend={checkCanSend}
                   visionConfig={visionConfig}
                   fileConfig={fileConfig}
+                  placeholder={`Message ${assistant.name}...`}
+                  emptyState={showDashboard
+                    ? (
+                      <Dashboard
+                        assistant={assistant}
+                        conversations={conversationList}
+                        onAssistantChange={handleAssistantChange}
+                        onPromptSelect={prompt => handleComposerSend(prompt)}
+                        onConversationSelect={handleConversationIdChange}
+                      />
+                    )
+                    : undefined}
                 />
               </div>)
           }

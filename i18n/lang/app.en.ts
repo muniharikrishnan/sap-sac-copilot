@@ -2,13 +2,12 @@ const translation = {
   common: {
     welcome: 'Welcome to use',
     appUnavailable: 'App is unavailable',
-    appUnkonwError: 'App is unavailable',
+    appUnkonwError: 'The assistant is temporarily unavailable. Please check the server configuration and try again.',
   },
   chat: {
     newChat: 'New chat',
     newChatDefaultName: 'New conversation',
     openingStatementTitle: 'Opening statement',
-    powerBy: 'Powered by',
     prompt: 'Prompt',
     privatePromptConfigTitle: 'Conversation settings',
     publicPromptConfigTitle: 'Initial Prompt',
