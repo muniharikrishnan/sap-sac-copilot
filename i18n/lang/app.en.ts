@@ -8,7 +8,6 @@ const translation = {
     newChat: 'New chat',
     newChatDefaultName: 'New conversation',
     openingStatementTitle: 'Opening statement',
-    powerBy: 'Powered by',
     prompt: 'Prompt',
     privatePromptConfigTitle: 'Conversation settings',
     publicPromptConfigTitle: 'Initial Prompt',
