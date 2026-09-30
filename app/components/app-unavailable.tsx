@@ -2,6 +2,7 @@
 import type { FC } from 'react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { LogoMark } from '@/app/components/brand'
 
 interface IAppUnavailableProps {
   isUnknownReason: boolean
@@ -17,12 +18,10 @@ const AppUnavailable: FC<IAppUnavailableProps> = ({
   if (!errMessage) { message = (isUnknownReason ? t('app.common.appUnkonwError') : t('app.common.appUnavailable')) as string }
 
   return (
-    <div className='flex items-center justify-center w-screen h-screen'>
-      <h1 className='mr-5 h-[50px] leading-[50px] pr-5 text-[24px] font-medium'
-        style={{
-          borderRight: '1px solid rgba(0,0,0,.3)',
-        }}>{(errMessage || isUnknownReason) ? 500 : 404}</h1>
-      <div className='text-sm'>{message}</div>
+    <div className='flex h-full w-full flex-col items-center justify-center gap-4 bg-canvas px-6 text-center'>
+      <LogoMark className='h-12 w-12' />
+      <div className='text-4xl font-semibold text-gray-300'>{(errMessage || isUnknownReason) ? 500 : 404}</div>
+      <div className='max-w-md text-sm text-gray-600'>{message}</div>
     </div>
   )
 }

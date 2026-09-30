@@ -17,4 +17,6 @@ export const API_PREFIX = '/api'
 
 export const LOCALE_COOKIE_NAME = 'locale'
 
+export const THEME_STORAGE_KEY = 'sac-copilot-theme'
+
 export const DEFAULT_VALUE_MAX_LEN = 48
